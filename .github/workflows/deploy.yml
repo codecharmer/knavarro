@@ -69,6 +69,12 @@ jobs:
             HEALTHCHECK_PATH="/api/root"
             export LANG=C
             export LC_ALL=C
+            export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
+            if [ -s "$NVM_DIR/nvm.sh" ]; then
+              . "$NVM_DIR/nvm.sh"
+              nvm use 20 >/dev/null 2>&1 || true
+            fi
 
             cd "$APP_DIR"
 
@@ -114,6 +120,8 @@ jobs:
                   ln -sf /opt/node20-glibc217/bin/npm /usr/local/bin/npm
                   ln -sf /opt/node20-glibc217/bin/npx /usr/local/bin/npx
                   ln -sf /opt/node20-glibc217/bin/corepack /usr/local/bin/corepack
+                  export PATH="/opt/node20-glibc217/bin:$PATH"
+                  hash -r
                 fi
               fi
 
