@@ -1,0 +1,118 @@
+name: Deploy Next App to VPS
+
+on:
+  push:
+    branches:
+      - master
+
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy Next.js app
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o IdentitiesOnly=yes \
+            -p "${{ secrets.SSH_PORT }}" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "whoami && hostname"
+
+      - name: Sync project files
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='.next' \
+            --exclude='.env' \
+            --exclude='npm-debug.log*' \
+            --exclude='yarn-error.log*' \
+            -e "ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -p ${{ secrets.SSH_PORT }}" \
+            ./ \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      - name: Build and restart app with PM2
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o IdentitiesOnly=yes \
+            -p "${{ secrets.SSH_PORT }}" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" <<'EOF'
+            set -euo pipefail
+
+            APP_NAME="kenia"
+            APP_DIR="${{ secrets.DEPLOY_PATH }}"
+            PACKAGE_MANAGER="yarn"
+            HEALTHCHECK_PATH="/api/root"
+
+            cd "$APP_DIR"
+
+            if [ ! -f .env ]; then
+              echo "ERROR: .env not found in $APP_DIR"
+              exit 1
+            fi
+
+            if ! command -v node >/dev/null 2>&1; then
+              echo "ERROR: node is not installed on the server"
+              exit 1
+            fi
+
+            if ! command -v "$PACKAGE_MANAGER" >/dev/null 2>&1; then
+              if command -v corepack >/dev/null 2>&1; then
+                corepack enable || true
+              fi
+            fi
+
+            if ! command -v "$PACKAGE_MANAGER" >/dev/null 2>&1; then
+              echo "ERROR: $PACKAGE_MANAGER is not installed on the server"
+              exit 1
+            fi
+
+            if ! command -v pm2 >/dev/null 2>&1; then
+              echo "ERROR: pm2 is not installed on the server"
+              exit 1
+            fi
+
+            if [ -f yarn.lock ]; then yarn install --frozen-lockfile; else yarn install; fi
+            yarn build
+
+            if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
+              pm2 restart "$APP_NAME" --update-env
+            else
+              pm2 start "yarn start" --name "$APP_NAME" --time
+            fi
+
+            pm2 save
+
+            if command -v curl >/dev/null 2>&1; then
+              curl -fsS "http://127.0.0.1:3000$HEALTHCHECK_PATH" >/dev/null || true
+            fi
+            EOF
+
+            if [ -x /usr/local/cpanel/scripts/ea-nginx ]; then
+              /usr/local/cpanel/scripts/ea-nginx clear_cache kenianavarrocom || true
+              /usr/local/cpanel/scripts/ea-nginx reload || true
+            fi
