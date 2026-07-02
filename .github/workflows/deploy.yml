@@ -83,6 +83,7 @@ jobs:
 
               GLIBC_MAJOR="0"
               GLIBC_MINOR="0"
+              OLD_GLIBC="0"
               if command -v getconf >/dev/null 2>&1; then
                 GLIBC_VERSION="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
                 GLIBC_MAJOR="${GLIBC_VERSION%%.*}"
@@ -91,13 +92,33 @@ jobs:
               fi
 
               if command -v yum >/dev/null 2>&1 && [ "${GLIBC_MAJOR:-0}" -eq 2 ] && [ "${GLIBC_MINOR:-0}" -lt 28 ]; then
+                OLD_GLIBC="1"
                 echo "Old glibc detected; trying cPanel EA4 Node package first..."
                 yum install -y ea-nodejs20 || yum install -y ea-nodejs18 || true
                 export PATH="/opt/cpanel/ea-nodejs20/root/usr/bin:/opt/cpanel/ea-nodejs20/bin:/opt/cpanel/ea-nodejs18/root/usr/bin:/opt/cpanel/ea-nodejs18/bin:$PATH"
+
+                NODE_MAJOR="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || true)"
+                if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 18 ]; then
+                  echo "EA4 Node 18/20 not available; installing Node 20 glibc-217 build..."
+                  yum install -y curl xz || yum install -y curl || true
+
+                  NODE_GLIBC217_VERSION="v20.11.1"
+                  NODE_GLIBC217_URL="https://unofficial-builds.nodejs.org/download/release/${NODE_GLIBC217_VERSION}/node-${NODE_GLIBC217_VERSION}-linux-x64-glibc-217.tar.xz"
+                  TMP_NODE_ARCHIVE="/tmp/node-${NODE_GLIBC217_VERSION}-linux-x64-glibc-217.tar.xz"
+
+                  curl -fL "$NODE_GLIBC217_URL" -o "$TMP_NODE_ARCHIVE"
+                  mkdir -p /opt/node20-glibc217
+                  tar -xJf "$TMP_NODE_ARCHIVE" -C /opt/node20-glibc217 --strip-components=1
+
+                  ln -sf /opt/node20-glibc217/bin/node /usr/local/bin/node
+                  ln -sf /opt/node20-glibc217/bin/npm /usr/local/bin/npm
+                  ln -sf /opt/node20-glibc217/bin/npx /usr/local/bin/npx
+                  ln -sf /opt/node20-glibc217/bin/corepack /usr/local/bin/corepack
+                fi
               fi
 
               NODE_MAJOR="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || true)"
-              if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 18 ]; then
+              if [ "$OLD_GLIBC" = "0" ] && ( [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 18 ] ); then
                 if command -v apt-get >/dev/null 2>&1; then
                   export DEBIAN_FRONTEND=noninteractive
                   apt-get update
@@ -126,7 +147,7 @@ jobs:
             if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 18 ]; then
               echo "ERROR: Could not provision Node.js >=18 on this host."
               echo "This app (Next.js 15 and dependencies) requires Node 18+."
-              echo "Use a host/container that supports Node 20, or install cPanel EA4 nodejs20."
+              echo "On CentOS 7-class hosts, use cPanel EA4 nodejs20 or a glibc-217 compatible Node 20 runtime."
               exit 1
             fi
 
