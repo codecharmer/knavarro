@@ -76,7 +76,32 @@ jobs:
             fi
 
             if ! command -v node >/dev/null 2>&1; then
-              echo "ERROR: node is not installed on the server"
+              echo "Node.js not found. Installing Node.js LTS..."
+              if command -v apt-get >/dev/null 2>&1; then
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update
+                apt-get install -y curl ca-certificates gnupg
+                mkdir -p /etc/apt/keyrings
+                curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+                echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+                apt-get update
+                apt-get install -y nodejs
+              elif command -v dnf >/dev/null 2>&1; then
+                dnf install -y curl ca-certificates
+                curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+                dnf install -y nodejs
+              elif command -v yum >/dev/null 2>&1; then
+                yum install -y curl ca-certificates
+                curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+                yum install -y nodejs
+              else
+                echo "ERROR: unsupported package manager. Install Node.js manually."
+                exit 1
+              fi
+            fi
+
+            if ! command -v node >/dev/null 2>&1; then
+              echo "ERROR: Node.js installation failed."
               exit 1
             fi
 
@@ -92,8 +117,7 @@ jobs:
             fi
 
             if ! command -v pm2 >/dev/null 2>&1; then
-              echo "ERROR: pm2 is not installed on the server"
-              exit 1
+              npm install -g pm2
             fi
 
             if [ -f yarn.lock ]; then yarn install --frozen-lockfile; else yarn install; fi
@@ -110,9 +134,9 @@ jobs:
             if command -v curl >/dev/null 2>&1; then
               curl -fsS "http://127.0.0.1:3000$HEALTHCHECK_PATH" >/dev/null || true
             fi
-            EOF
 
             if [ -x /usr/local/cpanel/scripts/ea-nginx ]; then
               /usr/local/cpanel/scripts/ea-nginx clear_cache kenianavarrocom || true
               /usr/local/cpanel/scripts/ea-nginx reload || true
             fi
+          EOF
